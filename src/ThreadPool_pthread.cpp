@@ -21,6 +21,7 @@
  * @author Andrew Lenharth <andrewl@lenharth.org>
  */
 #include "Galois/Runtime/Sampling.h"
+#include "Galois/Runtime/Stm.h"
 #include "Galois/Runtime/ThreadPool.h"
 #include "Galois/Runtime/ll/EnvCheck.h"
 #include "Galois/Runtime/ll/HWTopo.h"
@@ -143,11 +144,13 @@ class ThreadPool_pthread : public ThreadPool {
   }
 
   void prefixThreadWork(unsigned tid) {
+    Galois::Runtime::Stm::threadEnter();
     if (tid)
       Galois::Runtime::beginThreadSampling();
   }
 
   void suffixThreadWork(unsigned tid) {
+    Galois::Runtime::Stm::threadExit();
     if (tid)
       Galois::Runtime::endThreadSampling();
   }
@@ -172,6 +175,7 @@ public:
     ThreadPool(Galois::Runtime::LL::getMaxThreads()),
     started(0), shutdown(false), workBegin(0), workEnd(0)
   {
+    Galois::Runtime::Stm::start();
     initThread();
 
     starts = new Semaphore[maxThreads];
@@ -196,6 +200,7 @@ public:
     }
     delete [] starts;
     delete [] threads;
+    Galois::Runtime::Stm::stop();
   }
 
   virtual void run(RunCommand* begin, RunCommand* end, unsigned num) {

@@ -9,6 +9,11 @@ else()
   message(FATAL_ERROR "Unknown system name: ${CMAKE_SYSTEM_NAME}")
 endif()
 
+if(NOT USE_HWTOPO)
+  message(WARNING "disabling HWTOPO is not advised for performance runs")
+  set(hwtopo "None")
+endif()
+
 add_internal_library(ll EnvCheck.cpp gIO.cpp HWTopo.cpp
   HWTopo${hwtopo}.cpp SimpleLock.cpp
   TID.cpp)

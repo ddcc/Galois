@@ -53,6 +53,11 @@ void Galois::Runtime::Releasable::releaseAll() {
 void Galois::Runtime::clearReleasable() {
   releasableHead = 0;
 }
+
+void Galois::Runtime::applyReleasable() {
+  if (releasableHead) releasableHead->releaseAll();
+}
+
 #endif
 
 //! Global thread context for each active thread
@@ -80,7 +85,7 @@ Galois::Runtime::PendingFlag Galois::Runtime::getPending() {
 void Galois::Runtime::doCheckWrite() {
   if (Galois::Runtime::getPending() == Galois::Runtime::PENDING) {
 #ifdef GALOIS_USE_LONGJMP
-    if (releasableHead) releasableHead->releaseAll();
+    applyReleasable();
     longjmp(hackjmp, Galois::Runtime::REACHED_FAILSAFE);
 #else
     throw Galois::Runtime::REACHED_FAILSAFE;
@@ -98,7 +103,7 @@ Galois::Runtime::SimpleRuntimeContext* Galois::Runtime::getThreadContext() {
 
 void Galois::Runtime::signalConflict(Lockable* lockable) {
 #ifdef GALOIS_USE_LONGJMP
-  if (releasableHead) releasableHead->releaseAll();
+  applyReleasable();
   longjmp(hackjmp, Galois::Runtime::CONFLICT);
 #else
   throw Galois::Runtime::CONFLICT; // Conflict
@@ -113,10 +118,8 @@ void Galois::Runtime::forceAbort() {
 // LockManagerBase & SimpleRuntimeContext
 ////////////////////////////////////////////////////////////////////////////////
 
-#if !defined(GALOIS_USE_SEQ_ONLY)
-Galois::Runtime::LockManagerBase::AcquireStatus
-Galois::Runtime::LockManagerBase::tryAcquire(Galois::Runtime::Lockable* lockable) 
-{
+#if !defined(GALOIS_USE_SEQ_ONLY) && !defined(GALOIS_USE_TINYSTM)
+Galois::Runtime::LockManagerBase::AcquireStatus Galois::Runtime::LockManagerBase::tryAcquire(Galois::Runtime::Lockable* lockable) {
   assert(lockable);
   // XXX(ddn): Hand inlining this code makes a difference on 
   // delaunaytriangulation (GCC 4.7.2)

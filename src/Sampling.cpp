@@ -98,17 +98,18 @@ extern "C" {
 #include <papiStdEventDefs.h>
 }
 #include <iostream>
+#include <string.h>
 
 namespace papi {
 static bool isInit;
 static bool isSampling;
 static __thread int papiEventSet = PAPI_NULL;
 
-//static int papiEvents[2] = {PAPI_L3_TCA,PAPI_L3_TCM};
-//static const char* papiNames[2] = {"L3_ACCESSES","L3_MISSES"};
+static int papiEvents[3] = {PAPI_L3_TCA, PAPI_L3_TCM, PAPI_TOT_CYC};
+static const char* papiNames[3] = {"L3_ACCESSES","L3_MISSES", "CyclesCounter"};
 
-static int papiEvents[2] = {PAPI_TOT_INS, PAPI_TOT_CYC};
-static const char* papiNames[2] = {"Instructions", "Cycles"};
+//static int papiEvents[2] = {PAPI_TOT_INS, PAPI_TOT_CYC};
+//static const char* papiNames[2] = {"Instructions", "Cycles"};
 
 //static int papiEvents[2] = {PAPI_L1_DCM, PAPI_TOT_CYC};
 //static const char* papiNames[2] = {"L1DCMCounter", "CyclesCounter"};
@@ -168,18 +169,24 @@ static void end(bool mainThread) {
 
   long_long papiResults[sizeof(papiNames)/sizeof(*papiNames)];
 
+  memset(&papiResults, 0, sizeof(papiResults));
+
   // Get the values
-  if ((rv = PAPI_stop(papiEventSet, papiResults)) != PAPI_OK)
+  if ((rv = PAPI_stop(papiEventSet, papiResults)) != PAPI_OK) {
     GALOIS_DIE(PAPI_strerror(rv));
+  }
   // Remove all events in the eventset
-  if ((rv = PAPI_cleanup_eventset(papiEventSet)) != PAPI_OK)
+  if ((rv = PAPI_cleanup_eventset(papiEventSet)) != PAPI_OK) {
     GALOIS_DIE(PAPI_strerror(rv));
+  }
   // Free all memory and data structures, EventSet must be empty.
-  if ((rv = PAPI_destroy_eventset(&papiEventSet)) != PAPI_OK)
+  if ((rv = PAPI_destroy_eventset(&papiEventSet)) != PAPI_OK) {
     GALOIS_DIE(PAPI_strerror(rv));
+  }
   // Unregister thread
-  if ((rv = PAPI_unregister_thread()) != PAPI_OK) 
+  if ((rv = PAPI_unregister_thread()) != PAPI_OK) {
     GALOIS_DIE(PAPI_strerror(rv));
+  }
 
   for (unsigned i = 0; i < sizeof(papiNames)/sizeof(*papiNames); ++i)
     Galois::Runtime::reportStat(NULL, papiNames[i], papiResults[i]);

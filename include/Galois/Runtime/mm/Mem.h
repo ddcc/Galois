@@ -387,12 +387,28 @@ class SimpleBumpPtr : public SourceHeap {
     head = BP;
     offset = sizeof(Block);
   }
+
 public:
+  struct Mark { Block* head; int offset; };
+
   enum { AllocSize = 0 };
 
-  SimpleBumpPtr(): SourceHeap(), head(0), offset(0) {}
-  ~SimpleBumpPtr() {
-    clear();
+  SimpleBumpPtr(): SourceHeap(), head(0), offset(0) { }
+  
+  ~SimpleBumpPtr() { clear(); }
+
+  Mark getMark() {
+    Mark m = { head, offset };
+    return m;
+  }
+
+  void clearToMark(const Mark& mark) {
+    while (head != mark.head) {
+      Block* B = head;
+      head = B->next;
+      SourceHeap::deallocate(B);
+    }
+    offset = mark.offset;
   }
 
   void clear() {

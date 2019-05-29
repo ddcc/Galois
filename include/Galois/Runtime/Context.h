@@ -27,6 +27,7 @@
 
 #include "Galois/config.h"
 #include "Galois/MethodFlags.h"
+#include "Galois/Runtime/Stm.h"
 #include "Galois/Runtime/ll/PtrLock.h"
 #include "Galois/Runtime/ll/gio.h"
 
@@ -78,6 +79,7 @@ public:
   void releaseAll();
 };
 void clearReleasable();
+void applyReleasable();
 #else
 class Releasable {
 public:
@@ -85,6 +87,7 @@ public:
   virtual void release() = 0;
 };
 static inline void clearReleasable() { }
+static inline void applyReleasable() { }
 #endif
 
 class LockManagerBase; 
@@ -104,10 +107,10 @@ protected:
   void release (Lockable* lockable) {}
   static bool tryLock(Lockable* lockable) { return false; }
   static LockManagerBase* getOwner(Lockable* lockable) { return 0; }
-
 };
 
 class SimpleRuntimeContext: public LockManagerBase {
+  friend void doAcquire(Lockable*);
 protected:
   void acquire(Lockable* lockable) { }
   void release (Lockable* lockable) {}
@@ -123,6 +126,81 @@ public:
   unsigned cancelIteration() { return 0; }
   unsigned commitIteration() { return 0; }
 };
+#elif defined(GALOIS_USE_TINYSTM)
+class SimpleRuntimeContext;
+
+class Lockable { 
+  XTM_DECL_LOCKABLE(SimpleRuntimeContext*, owner);
+  XTM_DECL_LOCKABLE(Lockable*, next);
+  friend class SimpleRuntimeContext;
+public:
+  Lockable() {
+    XTM_LOCKABLE_VALUE(owner) = 0;
+    XTM_LOCKABLE_INIT(owner);
+    XTM_LOCKABLE_VALUE(next) = 0;
+    XTM_LOCKABLE_INIT(next);
+  }
+};
+
+class SimpleRuntimeContext: private boost::noncopyable {
+  XTM_DECL_LOCKABLE(Lockable*, locks);
+protected:
+  virtual void subAcquire(Lockable* lockable);
+  int tryAcquire(Lockable* lockable) {abort(); return 0; }
+  void insertLockable(Lockable* lockable) { 
+    GALOIS_STM_WRITE_PTR(lockable->next, XTM_LOCKABLE_VALUE(locks));
+    GALOIS_STM_WRITE_PTR(locks, lockable);
+  }
+  static bool tryLock(Lockable* lockable) { abort(); return false; }
+  bool tryLockOwner(Lockable* lockable) { abort(); return false; }
+  bool stealingCasOwner(Lockable* lockable, SimpleRuntimeContext* other) { abort(); return false; }
+  void setOwner(Lockable* lockable) { abort(); }
+  SimpleRuntimeContext* getOwner(Lockable* lockable) { abort(); return 0; }
+
+public:
+  SimpleRuntimeContext(bool child = false) { 
+    if (child) abort(); 
+    XTM_LOCKABLE_VALUE(locks) = 0;
+    XTM_LOCKABLE_INIT(locks);
+  }
+  virtual ~SimpleRuntimeContext() { }
+  void startIteration() { }
+  
+  unsigned cancelIteration() { return commitIteration(); }
+  unsigned commitIteration() { 
+    unsigned numLocks = 0;
+    Lockable* L;
+    // XXX(ddn): Hack to allow committing/aborting outside a tinySTM transaction 
+    if (!XTM_LOCKABLE_VALUE(locks))
+      return 0;
+    
+    while ((L = (Lockable*) GALOIS_STM_READ_PTR(locks))) {
+      GALOIS_STM_WRITE_PTR(locks, XTM_LOCKABLE_VALUE(L->next));
+      GALOIS_STM_WRITE_PTR(L->next, 0);
+      //SimpleRuntimeContext* other = (SimpleRuntimeContext*) GALOIS_STM_READ_PTR(L->owner);
+      //if (other != this)
+      //  GALOIS_DIE("Releasing not me! ", other);
+      GALOIS_STM_WRITE_PTR(L->owner, 0);
+      ++numLocks;
+    }
+
+    return numLocks;
+  }
+  
+  void acquire(Lockable* lockable) { 
+    SimpleRuntimeContext* other = (SimpleRuntimeContext*) GALOIS_STM_READ_PTR(lockable->owner);
+    if (other == 0) {
+      GALOIS_STM_WRITE_PTR(lockable->owner, this);
+      insertLockable(lockable);
+    } else if (other == this) {
+      return;
+    } else {
+      GALOIS_STM_WRITE_PTR(lockable->owner, this);
+      insertLockable(lockable);
+    }
+  }
+};
+
 #else
 /**
  * All objects that may be locked (nodes primarily) must inherit from
@@ -148,29 +226,29 @@ protected:
   AcquireStatus tryAcquire(Lockable* lockable);
 
   inline bool stealByCAS(Lockable* lockable, LockManagerBase* other) {
-    assert(lockable != nullptr);
+    assert(lockable != NULL);
     return lockable->owner.stealing_CAS(other, this);
   }
 
   inline void ownByForce(Lockable* lockable) {
-    assert(lockable != nullptr);
+    assert(lockable != NULL);
     assert(!lockable->owner.getValue());
     lockable->owner.setValue(this);
   }
 
   inline void release(Lockable* lockable) {
-    assert(lockable != nullptr);
+    assert(lockable != NULL);
     assert(getOwner(lockable) == this);
     lockable->owner.unlock_and_clear();
   }
 
   inline static bool tryLock(Lockable* lockable) {
-    assert(lockable != nullptr);
+    assert(lockable != NULL);
     return lockable->owner.try_lock();
   }
 
   inline static LockManagerBase* getOwner(Lockable* lockable) {
-    assert(lockable != nullptr);
+    assert(lockable != NULL);
     return lockable->owner.getValue();
   }
 };

@@ -1,5 +1,6 @@
 set(sources Barrier.cpp Context.cpp FileGraph.cpp FileGraphParallel.cpp
   OCFileGraph.cpp PerThreadStorage.cpp PreAlloc.cpp Sampling.cpp Support.cpp
+  Stm.cpp
   Termination.cpp Threads.cpp ThreadPool_pthread.cpp Timer.cpp)
 set(include_dirs "${PROJECT_SOURCE_DIR}/include/")
 if(USE_EXP)
@@ -55,6 +56,11 @@ add_subdirectory(mm)
 add_subdirectory(mm-nonuma)
 
 target_link_libraries(galois ${CMAKE_THREAD_LIBS_INIT})
+
+if(USE_TINYSTM)
+
+  target_link_libraries(galois tinystm)
+endif()
 
 if(NUMA_FOUND)
   target_link_libraries(galois ${NUMA_LIBRARIES})

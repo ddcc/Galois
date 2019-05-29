@@ -24,6 +24,7 @@
 #define GALOIS_WORKLIST_LOCALQUEUE_H
 
 #include "Galois/config.h"
+#include "Galois/WorkList/Fifo.h"
 #include <boost/mpl/if.hpp>
 #include GALOIS_CXX11_STD_HEADER(type_traits)
 

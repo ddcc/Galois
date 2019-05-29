@@ -28,18 +28,23 @@
 #ifndef GALOIS_RUNTIME_PARALLELWORK_H
 #define GALOIS_RUNTIME_PARALLELWORK_H
 
+#include "Galois/config.h"
 #include "Galois/Mem.h"
 #include "Galois/Statistic.h"
 #include "Galois/Runtime/Barrier.h"
 #include "Galois/Runtime/Context.h"
 #include "Galois/Runtime/ForEachTraits.h"
 #include "Galois/Runtime/Range.h"
+#include "Galois/Runtime/Stm.h"
 #include "Galois/Runtime/Support.h"
 #include "Galois/Runtime/Termination.h"
 #include "Galois/Runtime/ThreadPool.h"
 #include "Galois/Runtime/UserContextAccess.h"
 #include "Galois/WorkList/GFifo.h"
+#include "Galois/WorkList/LocalQueue.h"
 
+#include GALOIS_CXX11_STD_HEADER(utility)
+#include GALOIS_CXX11_STD_HEADER(type_traits)
 #include <algorithm>
 #include <functional>
 
@@ -122,8 +127,11 @@ template<typename value_type>
 class AbortHandler {
   struct Item { value_type val; int retries; };
 
+  typedef typename WorkList::GFIFO<Item>::template rethread<false>::type LocalAbortedList;
   typedef WorkList::GFIFO<Item> AbortedList;
+
   PerThreadStorage<AbortedList> queues;
+  PerThreadStorage<LocalAbortedList> localQueues;
   bool useBasicPolicy;
   
   /**
@@ -136,15 +144,14 @@ class AbortHandler {
   }
 
   /**
-   * Policy: retry work 2X locally, then serialize via tree on package (trying
+   * Policy: try work 2X locally, then serialize via tree on package (trying
    * twice at each level), then serialize via tree over packages.
    */
   void doublePolicy(const Item& item) {
-    int retries = item.retries - 1;
-    if ((retries & 1) == 1) {
-      queues.getLocal()->push(item);
+    if ((item.retries & 7) != 7) {
+      localQueues.getLocal()->push(item);
       return;
-    } 
+    }
     
     unsigned tid = LL::getTID();
     unsigned package = LL::getPackageForSelf(tid);
@@ -158,20 +165,19 @@ class AbortHandler {
   }
 
   /**
-   * Policy: retry work 2X locally, then serialize via tree on package but
+   * Policy: try work 3X locally, then serialize via tree on package but
    * try at most 3 levels, then serialize via tree over packages.
    */
   void boundedPolicy(const Item& item) {
-    int retries = item.retries - 1;
-    if (retries < 2) {
-      queues.getLocal()->push(item);
+    if (item.retries < 2) {
+      localQueues.getLocal()->push(item);
       return;
     } 
     
     unsigned tid = LL::getTID();
     unsigned package = LL::getPackageForSelf(tid);
     unsigned leader = LL::getLeaderForPackage(package);
-    if (retries < 5 && tid != leader) {
+    if (item.retries < 5 && tid != leader) {
       unsigned next = leader + (tid - leader) / 2;
       queues.getRemote(next)->push(item);
     } else {
@@ -183,39 +189,55 @@ class AbortHandler {
    * Retry locally only.
    */
   void eagerPolicy(const Item& item) {
-    queues.getLocal()->push(item);
+    localQueues.getLocal()->push(item);
   }
 
 public:
   AbortHandler() {
     // XXX(ddn): Implement smarter adaptive policy
-    useBasicPolicy = LL::getMaxPackages() > 2;
+    //useBasicPolicy = LL::getMaxPackages() > 2;
+    useBasicPolicy = false;
   }
 
   value_type& value(Item& item) const { return item.val; }
   value_type& value(value_type& val) const { return val; }
 
   void push(const value_type& val) {
-    Item item = { val, 1 };
-    queues.getLocal()->push(item);
+    Item item = { val, 0 };
+    localQueues.getLocal()->push(item);
   }
 
   void push(const Item& item) {
     Item newitem = { item.val, item.retries + 1 };
-    if (useBasicPolicy)
+#if defined(GALOIS_USE_ABORT_POLICY_BOUNDED)
+#  error "Not supported"
+    boundedPolicy(newitem);
+#elif defined(GALOIS_USE_ABORT_POLICY_EAGER)
+    eagerPolicy(newitem);
+#elif defined(GALOIS_USE_ABORT_POLICY_DOUBLE)
+    doublePolicy(newitem);
+#else
+    if (useBasicPolicy) {
       basicPolicy(newitem);
-    else
-      doublePolicy(newitem);
+      return;
+    }
+    doublePolicy(newitem);
+#endif
   }
 
   AbortedList* getQueue() { return queues.getLocal(); }
+  LocalAbortedList* getLocalQueue() { return localQueues.getLocal(); }
 };
 
 template<class WorkListTy, class T, class FunctionTy>
 class ForEachWork {
 protected:
   typedef T value_type;
+#ifdef GALOIS_USE_NO_WORKSTEALING
+  typedef typename WorkList::LocalQueue<>::template with_local<WorkList::GFIFO<> >::type::template retype<value_type>::type WLTy;
+#else
   typedef typename WorkListTy::template retype<value_type>::type WLTy;
+#endif
 
   struct ThreadLocalData {
     FunctionTy function;
@@ -266,31 +288,65 @@ protected:
       tld.facing.resetAlloc();
   }
 
-#ifdef GALOIS_USE_HTM
-# ifndef GALOIS_USE_LONGJMP
-#  error "HTM must be used with GALOIS_USE_LONGJMP"
-# endif
-#endif
-
   inline void doProcess(value_type& val, ThreadLocalData& tld) {
+#ifdef GALOIS_USE_TINYSTM
+    // GCC 4.7, XLC optimize this variable away even in presence of setjmp
+    // make volatile to prevent this
+    volatile bool first = true;
+    LL::compilerBarrier();
+#endif
     tld.stat.inc_iterations();
+    // NB: STM transaction needs to include committing iteration
     if (ForEachTraits<FunctionTy>::NeedsAborts)
       tld.ctx.startIteration();
 
-#ifdef GALOIS_USE_HTM
-# ifndef GALOIS_USE_LONGJMP
-#  error "HTM must be used with GALOIS_USE_LONGJMP"
-# endif
-#pragma tm_atomic
-    {
-#endif
-      tld.function(val, tld.facing.data());
-#ifdef GALOIS_USE_HTM
+    GALOIS_STM_BEGIN();
+
+#ifdef GALOIS_USE_TINYSTM
+    if (ForEachTraits<FunctionTy>::NeedsPush) {
+      tld.facing.resetPushBuffer();
+    }
+    if (first)
+      first = false;
+    else {
+#  ifndef GALOIS_USE_ABORT_POLICY_EAGER
+      abortIteration(val, tld);
+      GALOIS_STM_END();
+      forceAbort();
+#  endif
     }
 #endif
 
+#ifdef GALOIS_USE_HTM
+#  ifndef GALOIS_USE_LONGJMP
+#    error "HTM must be used with GALOIS_USE_LONGJMP"
+#  endif
+#  pragma tm_atomic
+#endif
+    {
+      tld.function(val, tld.facing.data());
+    }
+
     clearReleasable();
+#ifdef GALOIS_USE_TINYSTM
+    // need to inline commit iteration to form correct tinySTM transaction
+    if (ForEachTraits<FunctionTy>::NeedsAborts)
+      tld.ctx.commitIteration();
+    GALOIS_STM_END();
+    if (ForEachTraits<FunctionTy>::NeedsPush) {
+      auto ii = tld.facing.getPushBuffer().begin();
+      auto ee = tld.facing.getPushBuffer().end();
+      if (ii != ee) {
+	wl.push(ii, ee);
+	tld.facing.resetPushBuffer();
+      }
+    }
+    if (ForEachTraits<FunctionTy>::NeedsPIA)
+      tld.facing.resetAlloc();
+#else
     commitIteration(tld);
+    GALOIS_STM_END();
+#endif
   }
 
   bool runQueueSimple(ThreadLocalData& tld) {
@@ -307,6 +363,9 @@ protected:
 
   template<int limit, typename WL>
   bool runQueue(ThreadLocalData& tld, WL& lwl) {
+#ifdef GALOIS_USE_LONGJMP
+    volatile 
+#endif
     bool workHappened = false;
     Galois::optional<typename WL::value_type> p = lwl.pop();
     unsigned num = 0;
@@ -343,7 +402,10 @@ protected:
     case 0:
       break;
     case CONFLICT:
+#ifndef GALOIS_USE_TINYSTM
+      // Handled inside 
       abortIteration(*p, tld);
+#endif
       break;
     default:
       GALOIS_DIE("unknown conflict type");
@@ -353,7 +415,14 @@ protected:
 
   GALOIS_ATTRIBUTE_NOINLINE
   bool handleAborts(ThreadLocalData& tld) {
-    return runQueue<0>(tld, *aborted.getQueue());
+    bool workHappened = false;
+    while (runQueue<0>(tld, *aborted.getLocalQueue()))
+      workHappened = true;
+#ifndef GALOIS_USE_ABORT_POLICY_EAGER
+    if (runQueue<0>(tld, *aborted.getQueue()))
+      workHappened = true;
+#endif
+    return workHappened;
   }
 
   void fastPushBack(typename UserContextAccess<value_type>::PushBufferTy& x) {
