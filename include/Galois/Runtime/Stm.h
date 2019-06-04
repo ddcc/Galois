@@ -21,12 +21,12 @@ namespace Galois {
 namespace Runtime {
 namespace Stm {
 
-void stm_on_abort(void *arg);
-
 #ifdef GALOIS_USE_TINYSTM
+void stm_on_abort(const struct stm_tx *tx, const stm_tx_abort_t reason, const void *arg);
+
 static inline void start() {
-  stm_init();
-  mod_mem_init(0);
+  stm_init(NULL);
+  mod_mem_init();
   mod_stats_init();
   if (stm_register(NULL, NULL, NULL, NULL, NULL, stm_on_abort, NULL) == 0)
     abort();
@@ -61,10 +61,10 @@ static inline void threadExit() {
 } while (0)
 
 #  define GALOIS_STM_END() stm_commit()
-#  define GALOIS_STM_READ_WORD(var) stm_load((volatile stm_word_t*)(void*)&XTM_LOCKABLE_VALUE(var))
-#  define GALOIS_STM_READ_PTR(var) stm_load_ptr((volatile void**)(void*)&XTM_LOCKABLE_VALUE(var))
-#  define GALOIS_STM_WRITE_WORD(var, val) stm_store((volatile stm_word_t*)(void*)&XTM_LOCKABLE_VALUE(var), (stm_word_t)val)
-#  define GALOIS_STM_WRITE_PTR(var, val) stm_store_ptr((volatile void**)(void*)&XTM_LOCKABLE_VALUE(var), val)
+#  define GALOIS_STM_READ_WORD(var) stm_load((const stm_word_t*)(void*)&XTM_LOCKABLE_VALUE(var))
+#  define GALOIS_STM_READ_PTR(var) stm_load_ptr((const void**)(void*)&XTM_LOCKABLE_VALUE(var))
+#  define GALOIS_STM_WRITE_WORD(var, val) stm_store((stm_word_t*)(void*)&XTM_LOCKABLE_VALUE(var), (stm_word_t)val)
+#  define GALOIS_STM_WRITE_PTR(var, val) stm_store_ptr((void**)(void*)&XTM_LOCKABLE_VALUE(var), val)
 #else
 static inline void start() { }
 static inline void stop() { }

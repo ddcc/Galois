@@ -159,7 +159,8 @@ class ThreadPool_pthread : public ThreadPool {
     unsigned tid = Galois::Runtime::LL::getTID();
     while (!shutdown) {
       starts[tid].acquire();
-      doWork(tid);
+      if (!shutdown)
+        doWork(tid);
     }
   }
 

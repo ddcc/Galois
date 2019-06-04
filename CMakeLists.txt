@@ -203,6 +203,7 @@ if(USE_TINYSTM)
   set(GALOIS_USE_TINYSTM on)
   set(CMAKE_PREFIX_PATH ${TINYSTM_CMAKE_EXPORT} ${CMAKE_PREFIX_PATH})
   find_package(tinystm REQUIRED NO_CMAKE_PACKAGE_REGISTRY)
+  include_directories("${tinystm_INCLUDE_DIRS}")
 endif()
 
 # PThreads
