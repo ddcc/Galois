@@ -204,6 +204,11 @@ if(USE_TINYSTM)
   set(CMAKE_PREFIX_PATH ${TINYSTM_CMAKE_EXPORT} ${CMAKE_PREFIX_PATH})
   find_package(tinystm REQUIRED NO_CMAKE_PACKAGE_REGISTRY)
   include_directories("${tinystm_INCLUDE_DIRS}")
+elseif(USE_TINYSTM_XTM)
+  set(GALOIS_USE_XTM on)
+  set(CMAKE_PREFIX_PATH ${TINYSTM_CMAKE_EXPORT} ${CMAKE_PREFIX_PATH})
+  find_package(xtm REQUIRED NO_CMAKE_PACKAGE_REGISTRY)
+  include_directories("${xtm_INCLUDE_DIRS}")
 endif()
 
 # PThreads

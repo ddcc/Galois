@@ -118,7 +118,7 @@ void Galois::Runtime::forceAbort() {
 // LockManagerBase & SimpleRuntimeContext
 ////////////////////////////////////////////////////////////////////////////////
 
-#if !defined(GALOIS_USE_SEQ_ONLY) && !defined(GALOIS_USE_TINYSTM)
+#if !defined(GALOIS_USE_SEQ_ONLY) && !defined(GALOIS_USE_TINYSTM) && !defined(GALOIS_USE_XTM)
 Galois::Runtime::LockManagerBase::AcquireStatus Galois::Runtime::LockManagerBase::tryAcquire(Galois::Runtime::Lockable* lockable) {
   assert(lockable);
   // XXX(ddn): Hand inlining this code makes a difference on 

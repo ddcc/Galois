@@ -58,8 +58,9 @@ add_subdirectory(mm-nonuma)
 target_link_libraries(galois ${CMAKE_THREAD_LIBS_INIT})
 
 if(USE_TINYSTM)
-
   target_link_libraries(galois tinystm)
+elseif(USE_TINYSTM_XTM)
+  target_link_libraries(galois xtm)
 endif()
 
 if(NUMA_FOUND)

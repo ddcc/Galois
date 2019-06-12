@@ -3,9 +3,12 @@
 
 #include "Galois/config.h"
 
+#if defined(GALOIS_USE_TINYSTM) || defined(GALOIS_USE_XTM)
+#include <stm.h>
+#endif
+
 #ifdef GALOIS_USE_TINYSTM
 #include "Galois/Runtime/Support.h"
-#include <stm.h>
 #include <mod_stats.h>
 #include <mod_mem.h>
 #include <wrappers.h>
@@ -21,18 +24,24 @@ namespace Galois {
 namespace Runtime {
 namespace Stm {
 
+#if defined(GALOIS_USE_TINYSTM) || defined(GALOIS_USE_XTM)
+
 #ifdef GALOIS_USE_TINYSTM
 void stm_on_abort(const struct stm_tx *tx, const stm_tx_abort_t reason, const void *arg);
+#endif
 
 static inline void start() {
   stm_init(NULL);
+#ifdef GALOIS_USE_TINYSTM
   mod_mem_init();
   mod_stats_init();
   if (stm_register(NULL, NULL, NULL, NULL, NULL, stm_on_abort, NULL) == 0)
     abort();
+#endif
 }
 
 static inline void stop() {
+#ifdef GALOIS_USE_TINYSTM
   unsigned long commits = 0;
   unsigned long aborts = 0;
   unsigned long retries = 0;
@@ -42,6 +51,7 @@ static inline void stop() {
   printf("STAT,(NULL),TinySTMCommits,1,%lu,%lu\n", commits, commits);
   printf("STAT,(NULL),TinySTMAborts,1,%lu,%lu\n", aborts, aborts);
   printf("STAT,(NULL),TinySTMRetries,1,%lu,%lu\n", retries, retries);
+#endif
   stm_exit();
 }
 
@@ -70,6 +80,7 @@ static inline void start() { }
 static inline void stop() { }
 static inline void threadEnter() { }
 static inline void threadExit() { }
+
 #  define GALOIS_STM_BEGIN()
 #  define GALOIS_STM_END()
 #  define GALOIS_STM_READ_WORD(var) (var)

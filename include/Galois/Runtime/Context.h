@@ -126,7 +126,7 @@ public:
   unsigned cancelIteration() { return 0; }
   unsigned commitIteration() { return 0; }
 };
-#elif defined(GALOIS_USE_TINYSTM)
+#elif defined(GALOIS_USE_TINYSTM) || defined(GALOIS_USE_XTM)
 class SimpleRuntimeContext;
 
 class Lockable { 
